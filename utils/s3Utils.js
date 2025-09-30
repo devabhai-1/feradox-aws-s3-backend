@@ -1,45 +1,38 @@
-// routes/s3Routes.js
-const express = require('express');
-const router = express.Router();
-const { getSignedUrl } = require('../utils/s3Utils'); // सुनिश्चित करें कि पथ सही है
-const { verifyFirebaseToken } = require('../middleware/authMiddleware'); // यदि आप प्रमाणीकरण का उपयोग कर रहे हैं
+// utils/s3Utils.js
+const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl: awsGetSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
-const BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME;
-
-// यह राउट अब /api/generate-presigned-url के रूप में एक्सेस किया जाएगा
-router.get('/generate-presigned-url', verifyFirebaseToken, async (req, res) => {
-    const { fileName, fileType } = req.query;
-    const userId = req.user.uid; // verifyFirebaseToken से
-
-    if (!fileName || !fileType) {
-        return res.status(400).json({ error: 'fileName and fileType query parameters are required.' });
-    }
-    if (!BUCKET_NAME) {
-        console.error("AWS_S3_BUCKET_NAME पर्यावरण चर सेट नहीं है।");
-        return res.status(500).json({ error: 'Server configuration error.' });
-    }
-
-    const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-\s]/g, '_');
-    const s3Key = `${userId}/${Date.now()}_${sanitizedFileName}`;
-
-    try {
-        const uploadUrl = await getSignedUrl(
-            BUCKET_NAME,
-            s3Key,
-            fileType,
-            'putObject',
-            300
-        );
-        res.json({
-            uploadUrl: uploadUrl,
-            s3Key: s3Key,
-            originalFileName: fileName,
-            s3Bucket: BUCKET_NAME
-        });
-    } catch (error) {
-        console.error("Presigned URL उत्पन्न करने में त्रुटि:", error);
-        res.status(500).json({ error: 'Failed to generate presigned URL.' });
-    }
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
 });
 
-module.exports = router;
+async function getSignedUrl(bucket, key, contentType, operation = 'getObject', expiresInSecond = 300) {
+  let command;
+  let params = { Bucket: bucket, Key: key };
+
+  if (operation === 'putObject') {
+    if (!contentType) {
+      throw new Error("putObject ऑपरेशन के लिए ContentType आवश्यक है।");
+    }
+    params.ContentType = contentType;
+    command = new PutObjectCommand(params);
+  } else if (operation === 'getObject') {
+    command = new GetObjectCommand(params);
+  } else {
+    throw new Error(`असमर्थित ऑपरेशन: ${operation}. 'getObject' या 'putObject' का उपयोग करें।`);
+  }
+
+  try {
+    const signedUrl = await awsGetSignedUrl(s3Client, command, { expiresIn: expiresInSecond });
+    return signedUrl;
+  } catch (error) {
+    console.error(`S3 ${operation} के लिए हस्ताक्षरित URL उत्पन्न करने में त्रुटि (कुंजी: ${key}):`, error);
+    throw error;
+  }
+}
+
+module.exports = { getSignedUrl };

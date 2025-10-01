@@ -1,65 +1,100 @@
 // routes/s3Routes.js
 const express = require('express');
-const router = express.Router(); // बहुत महत्वपूर्ण: express.Router() का उपयोग करें
-const { getSignedUrl } = require('../utils/s3Utils'); // सुनिश्चित करें कि '../utils/s3Utils' का पथ सही है
-
-// वैकल्पिक: यदि आप Firebase प्रमाणीकरण का उपयोग कर रहे हैं
-// const { verifyFirebaseToken } = require('../middleware/authMiddleware'); // सुनिश्चित करें कि पथ सही है
+const router = express.Router();
+const { getSignedUrl } = require('../utils/s3Utils');
+// const { verifyFirebaseToken } = require('../middleware/authMiddleware'); // यदि आवश्यक हो तो अनकमेंट करें
 
 const BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME;
 
-console.log('[s3Routes.js] File loaded and router instance created.'); // स्टार्टअप पर यह लॉग देखें
+console.log('[s3Routes.js] File loaded and router instance created.');
 
-// GET /generate-presigned-url
-// यह app.js में '/api' के साथ उपसर्गित होगा, इसलिए यह /api/generate-presigned-url बन जाएगा
+// GET /generate-presigned-url (प्रीसाइन्ड अपलोड URL के लिए)
+// पूर्ण पथ: /api/generate-presigned-url
 router.get(
     '/generate-presigned-url',
-    // verifyFirebaseToken, // <-- यदि आप प्रमाणीकरण का उपयोग कर रहे हैं तो इसे अनकमेंट करें
+    // verifyFirebaseToken, // <-- प्रमाणीकरण के लिए
     async (req, res) => {
-        // यदि प्रमाणीकरण सक्षम है, तो userId को req.user.uid से प्राप्त करें
-        // const userId = req.user?.uid; // वैकल्पिक चेनिंग का उपयोग करें
-        // यदि प्रमाणीकरण सक्षम नहीं है, तो आपको userId के लिए एक वैकल्पिक तरीका चाहिए या इसे कुंजी में उपयोग न करें
-        const userId = req.user?.uid || 'anonymous-user'; // प्रमाणीकरण के बिना एक डिफ़ॉल्ट प्रदान करें (सावधान रहें)
-
-        console.log(`[s3Routes] GET /generate-presigned-url hit. Query:`, req.query, "User ID:", userId);
+        const userId = req.user?.uid || 'anonymous-user'; // प्रमाणीकरण से UID प्राप्त करें या डिफ़ॉल्ट
+        console.log(`[s3Routes] GET /generate-presigned-url (for Upload) hit. Query:`, req.query, "User ID:", userId);
 
         const { fileName, fileType } = req.query;
 
         if (!fileName || !fileType) {
-            console.log("[s3Routes] Bad Request: Missing fileName or fileType.");
-            return res.status(400).json({ error: 'fileName and fileType query parameters are required.' });
+            console.log("[s3Routes Upload] Bad Request: Missing fileName or fileType.");
+            return res.status(400).json({ error: 'fileName and fileType query parameters are required for upload URL.' });
         }
         if (!BUCKET_NAME) {
-            console.error("[s3Routes] Server Error: AWS_S3_BUCKET_NAME environment variable not set.");
+            console.error("[s3Routes Upload] Server Error: AWS_S3_BUCKET_NAME not set.");
             return res.status(500).json({ error: 'Server configuration error: S3 bucket name not set.' });
         }
 
-        const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-\s]/g, '_'); // विशेष वर्णों को हटा दें
+        const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-\s]/g, '_');
         const s3Key = `${userId}/${Date.now()}_${sanitizedFileName}`;
 
         try {
-            console.log(`[s3Routes] Attempting to generate presigned URL for bucket: ${BUCKET_NAME}, key: ${s3Key}, contentType: ${fileType}`);
+            console.log(`[s3Routes Upload] Attempting to generate presigned UPLOAD URL for bucket: ${BUCKET_NAME}, key: ${s3Key}, contentType: ${fileType}`);
             const uploadUrl = await getSignedUrl(
                 BUCKET_NAME,
                 s3Key,
-                fileType,    // यह ContentType के रूप में पास किया जाएगा
-                'putObject', // ऑपरेशन
-                300          // 5 मिनट में समाप्त होता है
+                fileType,
+                'putObject', // <<< ऑपरेशन 'putObject' है
+                300
             );
-            console.log("[s3Routes] Successfully generated presigned URL:", uploadUrl);
+            console.log("[s3Routes Upload] Successfully generated presigned UPLOAD URL:", uploadUrl);
             res.json({
                 uploadUrl: uploadUrl,
                 s3Key: s3Key,
-                originalFileName: fileName,
+                originalFileName: fileName, // मूल fileName का उपयोग करें यदि आवश्यक हो, या sanitizedFileName
                 s3Bucket: BUCKET_NAME
             });
         } catch (error) {
-            console.error(`[s3Routes] Error in getSignedUrl for key ${s3Key}:`, error.message, error.stack);
-            res.status(500).json({ error: `Failed to generate presigned URL. Details: ${error.message}` });
+            console.error(`[s3Routes Upload] Error in getSignedUrl for key ${s3Key}:`, error.message, error.stack);
+            res.status(500).json({ error: `Failed to generate presigned upload URL. Details: ${error.message}` });
         }
     }
 );
 
-// सुनिश्चित करें कि यह लाइन अंत में है
+// ---- नया एंडपॉइंट: प्रीसाइन्ड डाउनलोड URL के लिए ----
+// GET /generate-download-url
+// पूर्ण पथ: /api/generate-download-url
+router.get(
+    '/generate-download-url',
+    // verifyFirebaseToken, // <-- प्रमाणीकरण के लिए
+    async (req, res) => {
+        const userId = req.user?.uid || 'anonymous-user'; // प्रमाणीकरण से UID प्राप्त करें या डिफ़ॉल्ट
+        console.log(`[s3Routes] GET /generate-download-url (for Download) hit. Query:`, req.query, "User ID:", userId);
+
+        const { s3Key } = req.query; // <<< s3Key क्वेरी पैरामीटर के रूप में अपेक्षित है
+
+        if (!s3Key) {
+            console.log("[s3Routes Download] Bad Request: Missing s3Key for download URL.");
+            return res.status(400).json({ error: 's3Key query parameter is required for download URL.' });
+        }
+        if (!BUCKET_NAME) {
+            console.error("[s3Routes Download] Server Error: AWS_S3_BUCKET_NAME not set.");
+            return res.status(500).json({ error: 'Server configuration error: S3 bucket name not set.' });
+        }
+
+        try {
+            console.log(`[s3Routes Download] Attempting to generate presigned DOWNLOAD URL for bucket: ${BUCKET_NAME}, key: ${s3Key}`);
+            const downloadUrl = await getSignedUrl(
+                BUCKET_NAME,
+                s3Key,
+                null,       // <<< getObject के लिए ContentType की आवश्यकता नहीं है
+                'getObject',// <<< ऑपरेशन 'getObject' है
+                300         // 5 मिनट में समाप्त होता है
+            );
+            console.log("[s3Routes Download] Successfully generated presigned DOWNLOAD URL:", downloadUrl);
+            res.json({
+                downloadUrl: downloadUrl // केवल डाउनलोड URL लौटाएं
+            });
+        } catch (error) {
+            console.error(`[s3Routes Download] Error in getSignedUrl (getObject) for key ${s3Key}:`, error.message, error.stack);
+            res.status(500).json({ error: `Failed to generate presigned download URL. Details: ${error.message}` });
+        }
+    }
+);
+
 module.exports = router;
-console.log('[s3Routes.js] Router exported.'); // यह लॉग भी देखें
+console.log('[s3Routes.js] Router exported with upload and download URL generators.');
+

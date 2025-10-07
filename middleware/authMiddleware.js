@@ -9,6 +9,7 @@ async function verifyFirebaseToken(req, res, next) {
   const idToken = authHeader.split('Bearer ')[1];
   try {
     req.user = await admin.auth().verifyIdToken(idToken);
+    console.log(`[AUTH] Token verified for UID: ${req.user.uid}`);
     next();
   } catch (error) {
     console.error('[AUTH] Token verification error:', error.code);

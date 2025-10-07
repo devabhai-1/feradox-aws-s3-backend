@@ -15,6 +15,7 @@ async function getSignedUrl(bucket, key, contentType, operation, expiresIn = 300
   if (operation === 'putObject') {
     params.ContentType = contentType;
   }
+  // PutObjectCommand S3 v3 SDK में GetObject और PutObject दोनों के लिए presigned URL बना सकता है।
   const command = new PutObjectCommand(params);
   return await awsGetSignedUrl(s3Client, command, { expiresIn });
 }

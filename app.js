@@ -7,7 +7,7 @@ const app = express();
 app.use(express.json());
 app.use('/api', s3Routes);
 
-app.get('/', (req, res) => res.status(200).send('Feradox S3 Backend is alive and running!'));
+app.get('/', (req, res) => res.status(200).send('Feradox S3 Backend is alive and running! Version 2.0'));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`[OK] Server is listening on port ${PORT}`));
